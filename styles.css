@@ -283,7 +283,11 @@ body:has(#rest:not([hidden])) main { padding-bottom: 84px; }
 }
 #sheet.open .sheet-backdrop { opacity: 1; }
 #sheet.open .sheet-panel { transform: none; }
-.grabber { width: 40px; height: 5px; margin: 4px auto 14px; border-radius: 3px; background: var(--border); }
+.sheet-backdrop { cursor: pointer; }
+.grabber-zone { margin: -8px -20px 0; padding: 10px 0 16px; cursor: grab; touch-action: none; }
+.grabber { width: 40px; height: 5px; margin: 0 auto; border-radius: 3px; background: var(--muted); opacity: 0.45; }
+.confirm-text { margin: -6px 0 4px; color: var(--muted); font-size: 15px; }
+.btn.danger-fill { background: var(--danger); color: #fff; }
 .sheet-body h2 { margin: 0 0 14px; font-size: 22px; }
 .sheet-body > .eyebrow { margin-bottom: 4px; }
 .sheet-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 16px; }

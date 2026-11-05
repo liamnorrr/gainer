@@ -140,7 +140,7 @@ document.addEventListener('focusout', () => setTimeout(() => {
   if (pendingRender && !document.activeElement?.closest?.('#view input') && $('#sheet').hidden) { pendingRender = false; render(); }
 }, 50));
 
-window.FT = { getState: () => state, merge: mergeStates, applyRemote };
+window.FT = { getState: () => state, merge: mergeStates, applyRemote, ask: (o) => ask(o) };
 
 /* ---------- Derived data ---------- */
 const sorted = () => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
@@ -505,21 +505,95 @@ function toast(msg) {
 }
 
 /* ---------- Sheets ---------- */
+let sheetOnClose = null;   // called once when the sheet is dismissed (used by ask())
+let confirmSettle = null;
+
 function openSheet(html) {
   const s = $('#sheet');
   if (!s.hidden && s.classList.contains('open')) {
     $('.sheet-body', s).innerHTML = html;
+    $('.sheet-panel', s).scrollTop = 0;
     return;
   }
-  s.innerHTML = `<div class="sheet-backdrop" data-action="close-sheet"></div>
-    <div class="sheet-panel" role="dialog" aria-modal="true"><div class="grabber"></div><div class="sheet-body">${html}</div></div>`;
+  s.innerHTML = `<div class="sheet-backdrop"></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true"><div class="grabber-zone"><div class="grabber"></div></div><div class="sheet-body">${html}</div></div>`;
+  // Direct listener (not delegated): iOS Safari doesn't deliver delegated clicks on plain divs.
+  $('.sheet-backdrop', s).addEventListener('click', closeSheet);
+  attachSwipe(s);
   s.hidden = false;
   void s.offsetWidth; // force layout so the slide-up transition runs
   s.classList.add('open');
 }
 
+// Drag the sheet down to dismiss it: from the handle, or anywhere once its content is scrolled to the top.
+function attachSwipe(s) {
+  const panel = $('.sheet-panel', s), backdrop = $('.sheet-backdrop', s);
+  let tracking = false, dragging = false, startY = 0, dy = 0, lastY = 0, lastT = 0, vel = 0;
+
+  const begin = (y, fromHandle) => {
+    if (!fromHandle && panel.scrollTop > 0) return;
+    tracking = true; dragging = false; startY = lastY = y; lastT = performance.now(); dy = 0; vel = 0;
+  };
+  const move = (y, e) => {
+    if (!tracking) return;
+    const d = y - startY;
+    if (!dragging) {
+      if (d > 6) { dragging = true; panel.style.transition = 'none'; backdrop.style.transition = 'none'; document.activeElement?.blur?.(); }
+      else if (d < -6) { tracking = false; return; }   // scrolling up: let the content scroll
+      else return;
+    }
+    const now = performance.now();
+    vel = (y - lastY) / Math.max(1, now - lastT);
+    lastY = y; lastT = now;
+    dy = Math.max(0, d);
+    panel.style.transform = `translateY(${dy}px)`;
+    backdrop.style.opacity = String(Math.max(0, 1 - dy / panel.offsetHeight));
+    if (e?.cancelable) e.preventDefault();
+  };
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    if (!dragging) return;
+    dragging = false;
+    panel.style.transition = ''; backdrop.style.transition = '';
+    panel.style.transform = ''; backdrop.style.opacity = '';
+    if (dy > Math.min(120, panel.offsetHeight * 0.3) || vel > 0.5) closeSheet();
+  };
+
+  panel.addEventListener('touchstart', (e) => begin(e.touches[0].clientY, !!e.target.closest('.grabber-zone')), { passive: true });
+  panel.addEventListener('touchmove', (e) => move(e.touches[0].clientY, e), { passive: false });
+  panel.addEventListener('touchend', end);
+  panel.addEventListener('touchcancel', end);
+  // Mouse / trackpad: drag the handle.
+  panel.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || !e.target.closest('.grabber-zone')) return;
+    begin(e.clientY, true);
+    const mv = (ev) => move(ev.clientY, ev);
+    const up = () => { end(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  });
+}
+
+// In-app replacement for window.confirm(), which some browsers and home-screen apps silently block.
+function ask({ title, text = '', ok = 'Confirm', danger = false }) {
+  return new Promise((resolve) => {
+    const settle = (v) => { sheetOnClose = null; confirmSettle = null; resolve(v); };
+    openSheet(`<h2>${esc(title)}</h2>${text ? `<p class="confirm-text">${esc(text)}</p>` : ''}
+      <div class="sheet-actions">
+        <button class="btn ${danger ? 'danger-fill' : 'primary'} block" data-action="confirm-yes">${esc(ok)}</button>
+        <button class="btn soft block" data-action="confirm-no">Cancel</button>
+      </div>`);
+    confirmSettle = settle;
+    sheetOnClose = () => settle(false);
+  });
+}
+
 function closeSheet() {
   const s = $('#sheet');
+  const cb = sheetOnClose;
+  sheetOnClose = null;
+  cb?.();
   s.classList.remove('open');
   setTimeout(() => { if (!s.classList.contains('open')) {
     s.hidden = true; s.innerHTML = '';
@@ -670,13 +744,20 @@ function detectPRs(w) {
   return prs;
 }
 
-function finishWorkout() {
+function endDraft(msg) {
+  state.draft = null;
+  save(); stopRest(); go('home');
+  if (msg) toast(msg);
+}
+
+async function finishWorkout() {
   const d = state.draft;
+  if (!d) return;
   const exercises = d.exercises
     .map((e) => ({ name: e.name, sets: e.sets.filter((s) => num(s.reps) > 0).map((s) => ({ weight: num(s.weight), reps: Math.round(num(s.reps)) })) }))
     .filter((e) => e.sets.length);
   if (!exercises.length) {
-    if (confirm('No sets with reps logged yet. Discard this workout?')) { state.draft = null; save(); stopRest(); go('home'); }
+    if (await ask({ title: 'No sets logged', text: 'None of your sets have reps entered, so there is nothing to save. End this workout anyway?', ok: 'End workout', danger: true })) endDraft('Workout ended');
     return;
   }
   const w = {
@@ -685,11 +766,7 @@ function finishWorkout() {
   };
   const prs = detectPRs(w);
   state.workouts.push(w);
-  state.draft = null;
-  save();
-  stopRest();
-  go('home');
-  toast(prs.length ? `🏆 New PR: ${prs.join(', ')}` : 'Workout saved 💪');
+  endDraft(prs.length ? `🏆 New PR: ${prs.join(', ')}` : 'Workout saved 💪');
 }
 
 /* ---------- Rest timer ---------- */
@@ -742,11 +819,11 @@ async function exportData() {
 
 function importData(file) {
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = async () => {
     try {
       const data = JSON.parse(r.result);
       if (!Array.isArray(data.workouts) || !Array.isArray(data.weights)) throw new Error('bad');
-      if (!confirm(`Replace your current data with this backup (${data.workouts.length} workouts, ${data.weights.length} weigh-ins)?`)) return;
+      if (!await ask({ title: 'Restore backup?', text: `This replaces your current data with the backup (${data.workouts.length} workouts, ${data.weights.length} weigh-ins).`, ok: 'Restore', danger: true })) return;
       // Imported entries win over anything currently stored; entries not in the backup are removed.
       const now = Date.now(), incoming = normalize(data);
       const keep = new Set([...incoming.workouts, ...incoming.weights].map((x) => x.id));
@@ -790,11 +867,13 @@ const ACTIONS = {
   tab: (d) => go(d.tab),
   settings: openSettings,
   'close-sheet': closeSheet,
+  'confirm-yes': () => { const f = confirmSettle; sheetOnClose = null; closeSheet(); f?.(true); },
+  'confirm-no': closeSheet,
   'start-workout': () => { startDraft(); go('workout'); },
-  'repeat-workout': (d) => {
+  'repeat-workout': async (d) => {
     const tpl = state.workouts.find((w) => w.id === d.id);
     if (state.draft) {
-      if (!confirm('You already have a workout in progress. Replace it?')) return;
+      if (!await ask({ title: 'Replace current workout?', text: 'You already have a workout in progress. It will be discarded.', ok: 'Replace', danger: true })) return;
       state.draft = null;
     }
     startDraft(tpl);
@@ -820,26 +899,27 @@ const ACTIONS = {
     if (s.done && state.settings.rest > 0) startRest();
     save(); render();
   },
-  'remove-ex': (d) => {
+  'remove-ex': async (d) => {
     const e = state.draft.exercises[+d.ei];
-    if (e.sets.some((s) => s.done) && !confirm(`Remove ${e.name}?`)) return;
+    if (e.sets.some((s) => s.done) && !await ask({ title: `Remove ${e.name}?`, text: 'Its logged sets will be removed from this workout.', ok: 'Remove', danger: true })) return;
     state.draft.exercises.splice(+d.ei, 1);
     save(); render();
   },
   'finish-workout': finishWorkout,
-  'discard-workout': () => {
-    if (!confirm('Discard this workout? Nothing will be saved.')) return;
-    state.draft = null; save(); stopRest(); go('home');
+  'discard-workout': async () => {
+    if (!state.draft) return;
+    if (!await ask({ title: 'Discard workout?', text: 'Nothing from this session will be saved.', ok: 'Discard', danger: true })) return;
+    endDraft('Workout discarded');
   },
   'open-workout': (d) => openWorkout(d.id),
-  'delete-workout': (d) => {
-    if (!confirm('Delete this entry?')) return;
+  'delete-workout': async (d) => {
+    if (!await ask({ title: 'Delete this entry?', text: 'This also removes it from your other devices.', ok: 'Delete', danger: true })) return;
     tombstone(d.id);
     state.workouts = state.workouts.filter((w) => w.id !== d.id);
     save(); closeSheet(); render(); toast('Deleted');
   },
-  'delete-weight': (d) => {
-    if (!confirm('Delete this weigh-in?')) return;
+  'delete-weight': async (d) => {
+    if (!await ask({ title: 'Delete this weigh-in?', ok: 'Delete', danger: true })) return;
     tombstone(d.id);
     state.weights = state.weights.filter((w) => w.id !== d.id);
     save(); render();
@@ -851,9 +931,9 @@ const ACTIONS = {
   rest: (d) => { state.settings.rest = Number(d.value); save(); openSettings(); },
   export: exportData,
   import: () => $('#import-file')?.click(),
-  reset: () => {
-    if (!confirm('Delete ALL workouts, weigh-ins and settings? This cannot be undone.')) return;
-    if (!confirm('Are you absolutely sure? With sync on, this also clears your other devices.')) return;
+  reset: async () => {
+    if (!await ask({ title: 'Reset all data?', text: 'This deletes ALL workouts, weigh-ins and settings, on every synced device. It cannot be undone.', ok: 'Continue', danger: true })) return;
+    if (!await ask({ title: 'Are you absolutely sure?', text: 'Last chance. Consider exporting a backup first.', ok: 'Delete everything', danger: true })) return;
     const deleted = { ...state.deleted }, now = Date.now();
     [...state.workouts, ...state.weights].forEach((x) => { deleted[x.id] = now; });
     state = { ...freshState(), deleted, meta: state.meta };

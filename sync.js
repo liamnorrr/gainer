@@ -148,7 +148,8 @@ document.addEventListener('click', (e) => {
     if (!email) { set({ error: 'Enter your email above first.' }); return; }
     run(async () => { await fb.sendPasswordResetEmail(fb.auth, email); set({ error: `Password reset email sent to ${email}.` }); });
   } else if (t.dataset.sync === 'signout') {
-    if (confirm('Sign out? Your data stays on this device but will stop syncing.')) fb.signOut(fb.auth);
+    FT.ask({ title: 'Sign out?', text: 'Your data stays on this device but stops syncing.', ok: 'Sign out', danger: true })
+      .then((yes) => { if (yes) fb.signOut(fb.auth); });
   }
 });
 
