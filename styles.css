@@ -327,6 +327,21 @@ body:has(#rest:not([hidden])) main { padding-bottom: 84px; }
 .stepper b { min-width: 24px; text-align: center; font-size: 20px; }
 .sheet-body .grid2 + input + .btn { margin-top: 10px; }
 
+/* ---------- Sync ---------- */
+#sync-panel .muted { margin: 0 0 12px; }
+#sync-panel code { font-size: 12px; padding: 1px 5px; border-radius: 5px; background: var(--surface-2); }
+.sync-form { gap: 10px; }
+.sync-form .link { align-self: flex-start; padding-top: 2px; }
+.sync-error { margin: 0; color: var(--danger); font-size: 13px; font-weight: 600; }
+.btn:disabled { opacity: 0.5; }
+.sync-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+.sync-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.sync-dot.ok { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.sync-dot.warn { background: var(--weight); box-shadow: 0 0 0 4px var(--weight-soft); }
+.sync-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sync-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-text small { color: var(--muted); font-size: 13px; }
+
 /* ---------- Toast ---------- */
 #toast {
   position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 12px); z-index: 30;

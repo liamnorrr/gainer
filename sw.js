@@ -1,7 +1,7 @@
 // Offline support: serve fresh files when online, fall back to cache when offline.
-const CACHE = 'fittrack-v1';
+const CACHE = 'fittrack-v2';
 const ASSETS = [
-  './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'sync.js', 'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

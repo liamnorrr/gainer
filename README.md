@@ -11,7 +11,35 @@ A mobile-first fitness tracker web app (PWA). Add it to your phone's home screen
 - **Progress**: estimated 1RM chart and PRs per exercise, monthly cardio totals, all-time stats.
 - **Settings**: kg/lb and km/mi (converts existing data), weekly goal, rest timer length, backup export/import.
 
-All data is stored **on your phone only** (browser `localStorage`). Use *Settings → Export backup* now and then.
+Data is always saved on the device (so the app works offline). With **cloud sync** set up, it also syncs between your devices: log on your phone, see it on your laptop.
+
+## Cloud sync (Firebase)
+
+Sync uses Firebase Auth (email + password) and one Firestore document per user. Each device keeps its own copy and merges with the cloud whenever either side changes, so offline edits on two devices merge instead of overwriting each other, and deletions carry over.
+
+One-time setup (free Spark plan, no credit card):
+
+1. Go to https://console.firebase.google.com → **Create a project** (e.g. `gainer`). Google Analytics isn't needed.
+2. **Build → Authentication → Get started → Sign-in method → Email/Password → Enable → Save.**
+3. **Build → Firestore Database → Create database** → pick a location near you → **Start in production mode**.
+4. In Firestore, open the **Rules** tab, replace everything with the following, then **Publish**:
+
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /users/{uid} {
+         allow read, write: if request.auth != null && request.auth.uid == uid;
+       }
+     }
+   }
+   ```
+
+5. **Project settings** (gear icon) → **Your apps** → web icon `</>` → register an app (no Hosting needed) → copy the `firebaseConfig = { ... }` object into [`firebase-config.js`](firebase-config.js), then commit and push.
+6. Open the app → **Settings → Cloud sync → Create account** on one device, then **Sign in** with the same email and password on your other devices.
+7. Optional: so nobody else can sign up to your project, go to **Authentication → Settings → User actions** and untick **Enable create (sign-up)** once your account exists.
+
+The config values aren't secret. Your data is protected by sign-in plus the rules above, which only let each account read and write its own document.
 
 ## Files
 
@@ -22,6 +50,7 @@ All data is stored **on your phone only** (browser `localStorage`). Use *Setting
 | `styles.css` | Mobile-first styling (light and dark mode) |
 | `manifest.webmanifest`, `icons/` | Home-screen install metadata and icons |
 | `sw.js` | Service worker for offline use |
+| `sync.js`, `firebase-config.js` | Cloud sync between devices (optional) |
 
 No build step and no dependencies.
 

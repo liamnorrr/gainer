@@ -48,15 +48,27 @@ const fmtSecs = (s) => {
 };
 
 /* ---------- State ---------- */
+// Sync-friendly model: every workout / weigh-in has an id + updatedAt, deletions leave
+// a tombstone in `deleted`, and settings / draft carry their own timestamps in `meta`.
 const freshState = () => ({
   settings: { unit: 'kg', dist: 'km', goal: 3, rest: 90 },
   workouts: [], weights: [], custom: [], draft: null,
+  deleted: {}, meta: { settingsAt: 0, draftAt: 0 },
 });
+
+function normalize(s) {
+  const f = freshState();
+  return {
+    settings: { ...f.settings, ...s.settings },
+    workouts: s.workouts || [], weights: s.weights || [], custom: s.custom || [], draft: s.draft || null,
+    deleted: s.deleted || {}, meta: { ...f.meta, ...s.meta },
+  };
+}
 
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s) return { ...freshState(), ...s, settings: { ...freshState().settings, ...s.settings } };
+    if (s) return normalize(s);
   } catch (e) { /* fall through */ }
   return freshState();
 }
@@ -65,11 +77,70 @@ let state = load();
 let tab = 'home';
 let progressEx = null;
 let showAllWeights = false;
+let snap = { settings: JSON.stringify(state.settings), draft: JSON.stringify(state.draft) };
+
+function persist() {
+  snap = { settings: JSON.stringify(state.settings), draft: JSON.stringify(state.draft) };
+  try { localStorage.setItem(KEY, JSON.stringify(state)); return true; }
+  catch (e) { toast('Could not save — storage may be full'); return false; }
+}
 
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); }
-  catch (e) { toast('Could not save — storage may be full'); }
+  const now = Date.now();
+  if (JSON.stringify(state.settings) !== snap.settings) state.meta.settingsAt = now;
+  if (JSON.stringify(state.draft) !== snap.draft) state.meta.draftAt = now;
+  if (persist()) window.dispatchEvent(new Event('ft:saved'));
 }
+
+const tombstone = (id) => { state.deleted[id] = Date.now(); };
+
+/* ---------- Merging (used by cloud sync) ---------- */
+function mergeStates(a, b) {
+  a = normalize(a); b = normalize(b);
+  const deleted = { ...a.deleted };
+  for (const [k, v] of Object.entries(b.deleted)) deleted[k] = Math.max(deleted[k] || 0, v);
+  const newer = (x, y) => (x.updatedAt || 0) > (y.updatedAt || 0) || ((x.updatedAt || 0) === (y.updatedAt || 0) && x.id > y.id);
+  const list = (x, y) => {
+    const m = new Map();
+    for (const it of [...x, ...y]) { const c = m.get(it.id); if (!c || newer(it, c)) m.set(it.id, it); }
+    return [...m.values()]
+      .filter((it) => !(deleted[it.id] && deleted[it.id] >= (it.updatedAt || 0)))
+      .sort((p, q) => (p.id < q.id ? -1 : p.id > q.id ? 1 : 0));
+  };
+  // One weigh-in per date: the most recently edited wins.
+  const byDate = new Map();
+  for (const w of list(a.weights, b.weights)) { const c = byDate.get(w.date); if (!c || newer(w, c)) byDate.set(w.date, w); }
+  const sA = a.meta.settingsAt >= b.meta.settingsAt;
+  const dA = a.meta.draftAt >= b.meta.draftAt;
+  return {
+    settings: { ...freshState().settings, ...(sA ? a.settings : b.settings) },
+    workouts: list(a.workouts, b.workouts),
+    weights: [...byDate.values()].sort((p, q) => (p.id < q.id ? -1 : 1)),
+    custom: [...new Set([...a.custom, ...b.custom])].sort(),
+    draft: dA ? a.draft : b.draft,
+    deleted,
+    meta: { settingsAt: Math.max(a.meta.settingsAt, b.meta.settingsAt), draftAt: Math.max(a.meta.draftAt, b.meta.draftAt) },
+  };
+}
+
+let pendingRender = false;
+function applyRemote(remote) {
+  const merged = mergeStates(state, remote);
+  if (JSON.stringify(merged) === JSON.stringify(state)) return false;
+  state = merged;
+  persist();
+  // Don't yank focus away from a field the user is typing in; re-render once they leave it.
+  if (document.activeElement?.closest?.('#view input')) pendingRender = true;
+  else if ($('#sheet').hidden) render();
+  else pendingRender = true;
+  return true;
+}
+
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (pendingRender && !document.activeElement?.closest?.('#view input') && $('#sheet').hidden) { pendingRender = false; render(); }
+}, 50));
+
+window.FT = { getState: () => state, merge: mergeStates, applyRemote };
 
 /* ---------- Derived data ---------- */
 const sorted = () => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
@@ -450,7 +521,10 @@ function openSheet(html) {
 function closeSheet() {
   const s = $('#sheet');
   s.classList.remove('open');
-  setTimeout(() => { if (!s.classList.contains('open')) { s.hidden = true; s.innerHTML = ''; } }, 250);
+  setTimeout(() => { if (!s.classList.contains('open')) {
+    s.hidden = true; s.innerHTML = '';
+    if (pendingRender) { pendingRender = false; render(); }
+  } }, 250);
 }
 
 function openCardio() {
@@ -544,11 +618,14 @@ function openSettings() {
     <div class="setting"><span>Weight unit</span>${seg('unit', [['kg', 'kg'], ['lb', 'lb']], s.unit)}</div>
     <div class="setting"><span>Distance unit</span>${seg('dist', [['km', 'km'], ['mi', 'mi']], s.dist)}</div>
     <div class="setting"><span>Rest timer after each set</span>${seg('rest', [[0, 'Off'], [60, '60s'], [90, '90s'], [120, '2m'], [180, '3m']], s.rest)}</div>
+    <h3 class="section">Cloud sync</h3>
+    <div id="sync-panel"></div>
     <h3 class="section">Your data</h3>
-    <p class="muted small">Everything is stored on this phone only. Export a backup now and then so you never lose your history.</p>
+    <p class="muted small">A copy is always kept on this device so the app works offline. Backups are a good idea even with sync on.</p>
     <div class="grid2"><button class="btn soft" data-action="export">Export backup</button><button class="btn soft" data-action="import">Import backup</button></div>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
     <button class="btn ghost danger block" data-action="reset">Reset all data</button>`);
+  window.FTSync?.renderPanel();
 }
 
 /* ---------- Workout draft ---------- */
@@ -603,7 +680,7 @@ function finishWorkout() {
     return;
   }
   const w = {
-    id: d.id, type: 'strength', name: d.name.trim() || 'Workout', date: d.date, ts: d.start,
+    id: d.id, type: 'strength', name: d.name.trim() || 'Workout', date: d.date, ts: d.start, updatedAt: Date.now(),
     duration: clamp(Math.round((Date.now() - d.start) / 60000), 1, 300), exercises,
   };
   const prs = detectPRs(w);
@@ -670,7 +747,13 @@ function importData(file) {
       const data = JSON.parse(r.result);
       if (!Array.isArray(data.workouts) || !Array.isArray(data.weights)) throw new Error('bad');
       if (!confirm(`Replace your current data with this backup (${data.workouts.length} workouts, ${data.weights.length} weigh-ins)?`)) return;
-      state = { ...freshState(), ...data, settings: { ...freshState().settings, ...data.settings } };
+      // Imported entries win over anything currently stored; entries not in the backup are removed.
+      const now = Date.now(), incoming = normalize(data);
+      const keep = new Set([...incoming.workouts, ...incoming.weights].map((x) => x.id));
+      const deleted = { ...state.deleted };
+      [...state.workouts, ...state.weights].forEach((x) => { if (!keep.has(x.id)) deleted[x.id] = now; });
+      [...incoming.workouts, ...incoming.weights].forEach((x) => { x.updatedAt = now; delete deleted[x.id]; });
+      state = { ...incoming, deleted, meta: state.meta };
       save();
       closeSheet();
       render();
@@ -688,12 +771,14 @@ function convertUnits(kind, to) {
   if (from === to) return;
   if (kind === 'unit') {
     const f = to === 'lb' ? 2.20462 : 1 / 2.20462;
-    strength().forEach((w) => w.exercises.forEach((e) => e.sets.forEach((x) => { x.weight = round(x.weight * f); })));
-    state.weights.forEach((w) => { w.value = round(w.value * f); });
+    const now = Date.now();
+    strength().forEach((w) => { w.updatedAt = now; w.exercises.forEach((e) => e.sets.forEach((x) => { x.weight = round(x.weight * f); })); });
+    state.weights.forEach((w) => { w.value = round(w.value * f); w.updatedAt = now; });
     state.draft?.exercises.forEach((e) => e.sets.forEach((x) => { if (x.weight !== '') x.weight = round(num(x.weight) * f); }));
   } else {
     const f = to === 'mi' ? 0.621371 : 1 / 0.621371;
-    state.workouts.forEach((w) => { if (w.distance) w.distance = round(w.distance * f, 2); });
+    const now = Date.now();
+    state.workouts.forEach((w) => { if (w.distance) { w.distance = round(w.distance * f, 2); w.updatedAt = now; } });
   }
   s[kind] = to;
 }
@@ -749,11 +834,13 @@ const ACTIONS = {
   'open-workout': (d) => openWorkout(d.id),
   'delete-workout': (d) => {
     if (!confirm('Delete this entry?')) return;
+    tombstone(d.id);
     state.workouts = state.workouts.filter((w) => w.id !== d.id);
     save(); closeSheet(); render(); toast('Deleted');
   },
   'delete-weight': (d) => {
     if (!confirm('Delete this weigh-in?')) return;
+    tombstone(d.id);
     state.weights = state.weights.filter((w) => w.id !== d.id);
     save(); render();
   },
@@ -766,8 +853,11 @@ const ACTIONS = {
   import: () => $('#import-file')?.click(),
   reset: () => {
     if (!confirm('Delete ALL workouts, weigh-ins and settings? This cannot be undone.')) return;
-    if (!confirm('Are you absolutely sure?')) return;
-    state = freshState(); save(); stopRest(); closeSheet(); go('home'); toast('All data cleared');
+    if (!confirm('Are you absolutely sure? With sync on, this also clears your other devices.')) return;
+    const deleted = { ...state.deleted }, now = Date.now();
+    [...state.workouts, ...state.weights].forEach((x) => { deleted[x.id] = now; });
+    state = { ...freshState(), deleted, meta: state.meta };
+    save(); stopRest(); closeSheet(); go('home'); toast('All data cleared');
   },
   'rest-add': () => { rest.end += 30000; tickRest(); },
   'skip-rest': stopRest,
@@ -779,7 +869,7 @@ const FORMS = {
     if (duration <= 0) { toast('Enter a duration'); return; }
     const a = actMeta(f.activity);
     state.workouts.push({
-      id: uid(), type: 'cardio', activity: a.id, name: a.name, date: f.date || today(), ts: Date.now(),
+      id: uid(), type: 'cardio', activity: a.id, name: a.name, date: f.date || today(), ts: Date.now(), updatedAt: Date.now(),
       duration, distance: num(f.distance) || null, calories: Math.round(num(f.calories)) || null, notes: (f.notes || '').trim(),
     });
     save(); closeSheet(); render(); toast(`${a.icon} ${a.name} logged`);
@@ -789,7 +879,7 @@ const FORMS = {
     if (value <= 0) { toast('Enter your weight'); return; }
     const date = f.date || today();
     state.weights = state.weights.filter((w) => w.date !== date);
-    state.weights.push({ id: uid(), date, value: round(value) });
+    state.weights.push({ id: uid(), date, value: round(value), updatedAt: Date.now() });
     save(); closeSheet(); render(); toast('Weight logged');
   },
 };
