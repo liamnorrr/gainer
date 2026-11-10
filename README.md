@@ -5,6 +5,7 @@ A mobile-first fitness tracker web app (PWA). Add it to your phone's home screen
 ## Features
 
 - **Strength workouts**: log exercises with sets, reps and weight. "Last time" hints and pre-filled sets from your previous session. Rest timer after each set. Repeat past workouts in one tap. PR detection when you finish.
+- **Climbing**: bouldering, top rope, lead or auto-belay sessions with climb count and hardest grade (any grading system).
 - **Cardio**: run, walk, cycle, swim, row, hike, elliptical and more, with duration, distance, calories, notes and auto pace/speed.
 - **Body weight**: daily weigh-ins with a trend chart and 30-day change.
 - **Calendar**: month overview with a dot per session; tap a day to see what you did and when. Filter by muscle group.

@@ -46,7 +46,14 @@ const DEFAULT_EXERCISES = {
   'Cable Crunch': ['Abs'],
   'Hanging Leg Raise': ['Abs'],
   'Russian Twist': ['Abs'],
+  // Climbing strength training
+  'Hangboard': ['Forearms', 'Back'],
+  'Dead Hang': ['Forearms', 'Back'],
+  'Campus Board': ['Forearms', 'Back', 'Biceps'],
+  'Wrist Curl': ['Forearms'],
 };
+
+const CLIMB_STYLES = ['Bouldering', 'Top rope', 'Lead', 'Auto-belay'];
 
 const ACTIVITIES = [
   { id: 'run', name: 'Run', icon: '🏃', pace: true },
@@ -56,6 +63,7 @@ const ACTIVITIES = [
   { id: 'row', name: 'Row', icon: '🚣' },
   { id: 'hike', name: 'Hike', icon: '🥾', pace: true },
   { id: 'elliptical', name: 'Elliptical', icon: '⚙️' },
+  { id: 'climb', name: 'Climb', icon: '🧗' },
   { id: 'other', name: 'Other', icon: '⭐' },
 ];
 
@@ -196,6 +204,10 @@ const timeOf = (w) => (w.time !== undefined ? w.time || null : w.type === 'stren
 const sorted = () => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date) || (timeOf(b) || '').localeCompare(timeOf(a) || '') || b.ts - a.ts);
 const tsFor = (date, time) => { const d = fromKey(date); if (time) { const [h, m] = time.split(':').map(Number); d.setHours(h, m); } else d.setHours(12); return d.getTime(); };
 
+// Climbing is stored as an activity (type 'cardio', activity 'climb') but shown as its own kind.
+const isClimb = (w) => w.type === 'cardio' && w.activity === 'climb';
+const kindOf = (w) => (w.type === 'strength' ? 'strength' : isClimb(w) ? 'climb' : 'cardio');
+
 /* ---------- Exercise library ---------- */
 function exLibrary() {
   const own = new Map(state.library.map((x) => [x.id, x]));
@@ -214,7 +226,7 @@ const tagOrder = (t) => { const i = TAGS.indexOf(t); return i < 0 ? 99 : i; };
 const sortTags = (tags) => [...new Set(tags)].sort((a, b) => tagOrder(a) - tagOrder(b) || byName(a, b));
 function allTags() { return sortTags([...TAGS, ...exLibrary().flatMap((x) => x.tags)]); }
 function workoutTags(w) {
-  if (w.type === 'cardio') return ['Cardio'];
+  if (w.type === 'cardio') return [isClimb(w) ? 'Climbing' : 'Cardio'];
   return sortTags(w.exercises.flatMap((e) => exTags(e.name)));
 }
 const tagChips = (tags) => (tags.length ? `<span class="tag-list">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span>` : '');
@@ -255,6 +267,10 @@ function summary(w) {
     const vol = volume(w);
     const n = w.exercises.length;
     return `${n} exercise${n === 1 ? '' : 's'} · ${sets} sets${vol ? ` · ${fmtNum(vol)} ${unit}` : ''}`;
+  }
+  if (isClimb(w)) {
+    return [w.duration && `${fmtNum(w.duration)} min`, w.climbs && `${w.climbs} climb${w.climbs === 1 ? '' : 's'}`, w.grade && `max ${w.grade}`]
+      .filter(Boolean).join(' · ');
   }
   return [w.duration && `${fmtNum(w.duration)} min`, w.distance && `${fmtNum(w.distance)} ${dist}`, w.calories && `${fmtNum(w.calories)} kcal`]
     .filter(Boolean).join(' · ');
@@ -334,7 +350,7 @@ function workoutRow(w, { showDate = true } = {}) {
   const when = [showDate && fmtDate(w.date), t && fmtTime(t)].filter(Boolean).join(' · ');
   const tags = w.type === 'strength' ? workoutTags(w) : [];
   return `<button class="row" data-action="open-workout" data-id="${w.id}">
-    <span class="row-icon ${w.type}">${icon}</span>
+    <span class="row-icon ${kindOf(w)}">${icon}</span>
     <span class="row-main"><b>${esc(w.name)}</b><small>${when ? `${when} · ` : ''}${esc(summary(w))}</small>${tagChips(tags.slice(0, 4))}</span>
     <span class="chev">›</span></button>`;
 }
@@ -408,8 +424,12 @@ function workoutView() {
       <button class="row" data-action="repeat-workout" data-id="${w.id}"><span class="row-icon strength">↻</span>
       <span class="row-main"><b>${esc(w.name)}</b><small>${esc(w.exercises.map((e) => e.name).join(', '))}</small></span><span class="chev">›</span></button>`).join('')}</div>` : ''}
     <h3 class="section">Other activity</h3>
-    <div class="list"><button class="row" data-action="log-cardio"><span class="row-icon cardio">🏃</span>
-      <span class="row-main"><b>Log cardio</b><small>Run, ride, swim, walk…</small></span><span class="chev">›</span></button></div>`;
+    <div class="list">
+      <button class="row" data-action="log-cardio" data-activity="climb"><span class="row-icon climb">🧗</span>
+        <span class="row-main"><b>Log climbing</b><small>Bouldering, top rope, lead</small></span><span class="chev">›</span></button>
+      <button class="row" data-action="log-cardio"><span class="row-icon cardio">🏃</span>
+        <span class="row-main"><b>Log cardio</b><small>Run, ride, swim, walk…</small></span><span class="chev">›</span></button>
+    </div>`;
   }
 
   const u = state.settings.unit;
@@ -569,7 +589,7 @@ function calendarView() {
   const cells = Array.from({ length: 42 }, (_, i) => {
     const d = addDays(start, i), k = toKey(d);
     const ws = byDay[k] || [];
-    const dots = ws.slice(0, 3).map((w) => `<i class="${w.type}"></i>`).join('') + (ws.length > 3 ? '<i class="more"></i>' : '');
+    const dots = ws.slice(0, 3).map((w) => `<i class="${kindOf(w)}"></i>`).join('') + (ws.length > 3 ? '<i class="more"></i>' : '');
     const cls = [d.getMonth() !== m && 'out', k === today() && 'today', k === calDay && 'sel', ws.length && 'has', k > today() && 'future'].filter(Boolean).join(' ');
     return `<button class="cal-cell ${cls}" data-action="cal-day" data-date="${k}" aria-label="${fmtDate(k)}${ws.length ? `, ${ws.length} session${ws.length === 1 ? '' : 's'}` : ''}">
       <span>${d.getDate()}</span><span class="dots">${dots}</span></button>`;
@@ -596,7 +616,7 @@ function calendarView() {
       <button class="icon-btn" data-action="cal-next" aria-label="Next month">›</button>
     </div>
     <div class="cal-grid">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => `<span class="cal-dow">${d}</span>`).join('')}${cells}</div>
-    <div class="cal-legend"><span><i class="strength"></i>Strength</span><span><i class="cardio"></i>Cardio</span>
+    <div class="cal-legend"><span><i class="strength"></i>Strength</span><span><i class="cardio"></i>Cardio</span><span><i class="climb"></i>Climbing</span>
       ${toKey(calMonth) !== toKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) ? '<button class="link" data-action="cal-today">Today</button>' : ''}</div>
   </section>
 
@@ -801,21 +821,28 @@ function closeSheet() {
   } }, 250);
 }
 
-// New cardio entry (optionally on a given past date), or edit an existing one.
-function openCardio(existing = null, date = null) {
+// New cardio/climbing entry (optionally on a given past date or with a preset activity), or edit one.
+function openCardio(existing = null, date = null, activity = null) {
   const w = existing;
-  const act = w?.activity || sorted().find((x) => x.type === 'cardio')?.activity || 'run';
+  const act = w?.activity || activity || sorted().find((x) => x.type === 'cardio' && !isClimb(x))?.activity || 'run';
   const { dist } = state.settings;
   const v = (x) => (x === null || x === undefined ? '' : esc(x));
-  openSheet(`<h2>${w ? 'Edit activity' : 'Log cardio'}</h2>
+  const style = w?.climbStyle || sorted().find(isClimb)?.climbStyle || 'Bouldering';
+  const title = w ? 'Edit activity' : act === 'climb' ? 'Log climbing' : 'Log cardio';
+  openSheet(`<h2>${title}</h2>
   <form data-form="cardio" class="form">
     <input type="hidden" name="id" value="${w ? w.id : ''}">
-    <div class="chips">${ACTIVITIES.map((a) => `<label class="chip"><input type="radio" name="activity" value="${a.id}" ${a.id === act ? 'checked' : ''}><span>${a.icon} ${a.name}</span></label>`).join('')}</div>
+    <div class="chips">${ACTIVITIES.map((a) => `<label class="chip${a.id === 'climb' ? ' climb-chip' : ''}"><input type="radio" name="activity" value="${a.id}" ${a.id === act ? 'checked' : ''}><span>${a.icon} ${a.name}</span></label>`).join('')}</div>
+    <div class="climb-only field"><span>Style</span>
+      <div class="chips">${CLIMB_STYLES.map((s) => `<label class="chip climb-chip"><input type="radio" name="climbStyle" value="${s}" ${s === style ? 'checked' : ''}><span>${s}</span></label>`).join('')}</div>
+    </div>
     <div class="grid2">
       <label class="field"><span>Date</span><input type="date" name="date" value="${w?.date || date || today()}" max="${today()}"></label>
       <label class="field"><span>Time <em>optional</em></span><input type="time" name="time" value="${v(w ? timeOf(w) : '')}"></label>
-      <label class="field"><span>Duration (min)</span><input name="duration" inputmode="decimal" placeholder="30" value="${v(w?.duration)}" required></label>
-      <label class="field"><span>Distance (${dist})</span><input name="distance" inputmode="decimal" placeholder="Optional" value="${v(w?.distance)}"></label>
+      <label class="field"><span>Duration (min)</span><input name="duration" inputmode="decimal" placeholder="${act === 'climb' ? '90' : '30'}" value="${v(w?.duration)}" required></label>
+      <label class="field not-climb"><span>Distance (${dist})</span><input name="distance" inputmode="decimal" placeholder="Optional" value="${v(w?.distance)}"></label>
+      <label class="field climb-only"><span>Climbs <em>optional</em></span><input name="climbs" inputmode="numeric" placeholder="e.g. 12" value="${v(w?.climbs)}"></label>
+      <label class="field climb-only"><span>Hardest grade <em>optional</em></span><input name="grade" placeholder="V5, 6b+, 5.11a…" value="${v(w?.grade)}" autocapitalize="characters" autocomplete="off"></label>
       <label class="field"><span>Calories</span><input name="calories" inputmode="numeric" placeholder="Optional" value="${v(w?.calories)}"></label>
     </div>
     <label class="field"><span>Notes</span><input name="notes" placeholder="How did it feel?" value="${v(w?.notes)}"></label>
@@ -830,6 +857,8 @@ function openAddOnDay(date) {
     <div class="list">
       <button class="row" data-action="log-past" data-date="${date}"><span class="row-icon strength">🏋️</span>
         <span class="row-main"><b>Strength workout</b><small>Exercises, sets and reps</small></span><span class="chev">›</span></button>
+      <button class="row" data-action="log-cardio" data-date="${date}" data-activity="climb"><span class="row-icon climb">🧗</span>
+        <span class="row-main"><b>Climbing</b><small>Bouldering, top rope, lead</small></span><span class="chev">›</span></button>
       <button class="row" data-action="log-cardio" data-date="${date}"><span class="row-icon cardio">🏃</span>
         <span class="row-main"><b>Cardio</b><small>Run, ride, swim, walk…</small></span><span class="chev">›</span></button>
     </div>`);
@@ -947,6 +976,13 @@ function openWorkout(id) {
       w.exercises.map((e) => `<div class="detail-ex"><b>${esc(e.name)}</b><div class="set-chips">${e.sets.map((s) =>
         `<span>${s.weight ? `${fmtNum(s.weight)} ${unit} × ` : ''}${s.reps}</span>`).join('')}</div></div>`).join('') +
       (w.notes ? `<p class="notes">${esc(w.notes)}</p>` : '');
+  } else if (isClimb(w)) {
+    body = `<div class="tiles">
+        <div class="tile"><small>Style</small><b>${esc(w.climbStyle || 'Climbing')}</b></div>
+        <div class="tile"><small>Duration</small><b>${fmtNum(w.duration)} min</b></div>
+        <div class="tile"><small>Climbs</small><b>${w.climbs || '—'}</b></div>
+        <div class="tile"><small>Hardest grade</small><b>${w.grade ? esc(w.grade) : '—'}</b></div>
+      </div>${w.calories ? `<p class="muted small detail-extra">${fmtNum(w.calories)} kcal</p>` : ''}${w.notes ? `<p class="notes">${esc(w.notes)}</p>` : ''}`;
   } else {
     const a = actMeta(w.activity);
     let pace = '—';
@@ -1175,7 +1211,7 @@ const ACTIONS = {
     closeSheet();
     go('workout');
   },
-  'log-cardio': (d) => openCardio(null, d.date || null),
+  'log-cardio': (d) => openCardio(null, d.date || null, d.activity || null),
   'log-weight': openWeight,
   'log-past': (d) => startEdit(null, d.date || today()),
   'add-on-day': (d) => openAddOnDay(d.date),
@@ -1280,10 +1316,13 @@ const FORMS = {
     const a = actMeta(f.activity);
     const old = f.id ? state.workouts.find((w) => w.id === f.id) : null;
     const date = f.date || today(), time = f.time || null;
+    const climb = a.id === 'climb';
+    const style = climb ? (CLIMB_STYLES.includes(f.climbStyle) ? f.climbStyle : 'Bouldering') : null;
     const entry = {
-      id: old ? old.id : uid(), type: 'cardio', activity: a.id, name: a.name, date, time,
+      id: old ? old.id : uid(), type: 'cardio', activity: a.id, name: climb ? style : a.name, date, time,
       ts: time || !old ? tsFor(date, time) : old.ts, updatedAt: Date.now(),
-      duration, distance: num(f.distance) || null, calories: Math.round(num(f.calories)) || null, notes: (f.notes || '').trim(),
+      duration, distance: climb ? null : num(f.distance) || null, calories: Math.round(num(f.calories)) || null, notes: (f.notes || '').trim(),
+      ...(climb ? { climbStyle: style, climbs: Math.round(num(f.climbs)) || null, grade: (f.grade || '').trim().slice(0, 12) || null } : {}),
     };
     state.workouts = state.workouts.filter((w) => w.id !== entry.id);
     state.workouts.push(entry);
