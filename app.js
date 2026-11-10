@@ -2,6 +2,8 @@
 
 /* ---------- Constants ---------- */
 const KEY = 'fittrack.v1';
+// Bump on every deploy so you can confirm in Settings which version a device is running.
+const APP_VERSION = '7 (climbing)';
 
 // Muscle-group tags, in display order. Users can add their own tags too.
 const TAGS = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Legs', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Full body'];
@@ -396,6 +398,7 @@ function homeView() {
   <div class="quick">
     <button class="qa strength" data-action="start-workout"><span class="qi">🏋️</span>${d ? 'Resume' : 'Start'} workout</button>
     <button class="qa cardio" data-action="log-cardio"><span class="qi">🏃</span>Log cardio</button>
+    <button class="qa climb" data-action="log-cardio" data-activity="climb"><span class="qi">🧗</span>Log climb</button>
     <button class="qa weight" data-action="log-weight"><span class="qi">⚖️</span>Log weight</button>
   </div>
   <h3 class="section">Recent activity</h3>
@@ -1024,7 +1027,8 @@ function openSettings() {
     <p class="muted small">A copy is always kept on this device so the app works offline. Backups are a good idea even with sync on.</p>
     <div class="grid2"><button class="btn soft" data-action="export">Export backup</button><button class="btn soft" data-action="import">Import backup</button></div>
     <input type="file" id="import-file" accept="application/json,.json" hidden>
-    <button class="btn ghost danger block" data-action="reset">Reset all data</button>`);
+    <button class="btn ghost danger block" data-action="reset">Reset all data</button>
+    <p class="version">Gainer · version ${APP_VERSION}</p>`);
   window.FTSync?.renderPanel();
 }
 
@@ -1390,6 +1394,22 @@ setInterval(() => {
 /* ---------- Boot ---------- */
 render();
 navigator.storage?.persist?.();
+
+// Updates: check for a new version whenever the app comes back to the foreground, and
+// reload into it once it's installed (deferred if you're mid-edit so nothing is lost).
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloadPending = false;
+  const busy = () => tab === 'edit' || !$('#sheet').hidden || !!document.activeElement?.matches?.('input, textarea');
+  const applyUpdate = () => {
+    if (busy()) { reloadPending = true; return; }
+    location.reload();
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) applyUpdate(); });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (reloadPending) location.reload(); }
+      else reg.update().catch(() => {});
+    });
+  }).catch(() => {});
 }
