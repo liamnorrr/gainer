@@ -3,13 +3,50 @@
 /* ---------- Constants ---------- */
 const KEY = 'fittrack.v1';
 
-const EXERCISES = [
-  'Bench Press', 'Incline Dumbbell Press', 'Overhead Press', 'Push-up', 'Dips',
-  'Squat', 'Front Squat', 'Leg Press', 'Lunge', 'Leg Extension', 'Leg Curl', 'Calf Raise',
-  'Deadlift', 'Romanian Deadlift', 'Hip Thrust',
-  'Barbell Row', 'Pull-up', 'Chin-up', 'Lat Pulldown', 'Seated Cable Row', 'Face Pull',
-  'Lateral Raise', 'Bicep Curl', 'Hammer Curl', 'Tricep Pushdown', 'Skull Crusher', 'Plank',
-];
+// Muscle-group tags, in display order. Users can add their own tags too.
+const TAGS = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Legs', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Full body'];
+
+// Built-in exercise library: name → tags. Users can edit, delete or add to it.
+const DEFAULT_EXERCISES = {
+  'Bench Press': ['Chest', 'Triceps'],
+  'Incline Dumbbell Press': ['Chest', 'Shoulders'],
+  'Dumbbell Fly': ['Chest'],
+  'Push-up': ['Chest', 'Triceps'],
+  'Dips': ['Chest', 'Triceps'],
+  'Overhead Press': ['Shoulders', 'Triceps'],
+  'Dumbbell Shoulder Press': ['Shoulders', 'Triceps'],
+  'Lateral Raise': ['Shoulders'],
+  'Rear Delt Fly': ['Shoulders', 'Back'],
+  'Face Pull': ['Shoulders', 'Back'],
+  'Shrug': ['Back'],
+  'Deadlift': ['Back', 'Legs', 'Hamstrings', 'Glutes'],
+  'Barbell Row': ['Back', 'Biceps'],
+  'Pull-up': ['Back', 'Biceps'],
+  'Chin-up': ['Back', 'Biceps'],
+  'Lat Pulldown': ['Back', 'Biceps'],
+  'Seated Cable Row': ['Back', 'Biceps'],
+  'Bicep Curl': ['Biceps'],
+  'Hammer Curl': ['Biceps', 'Forearms'],
+  'Preacher Curl': ['Biceps'],
+  'Tricep Pushdown': ['Triceps'],
+  'Skull Crusher': ['Triceps'],
+  'Overhead Tricep Extension': ['Triceps'],
+  'Squat': ['Legs', 'Quads', 'Glutes'],
+  'Front Squat': ['Legs', 'Quads'],
+  'Leg Press': ['Legs', 'Quads', 'Glutes'],
+  'Lunge': ['Legs', 'Quads', 'Glutes'],
+  'Bulgarian Split Squat': ['Legs', 'Quads', 'Glutes'],
+  'Leg Extension': ['Legs', 'Quads'],
+  'Leg Curl': ['Legs', 'Hamstrings'],
+  'Romanian Deadlift': ['Legs', 'Hamstrings', 'Glutes'],
+  'Hip Thrust': ['Legs', 'Glutes'],
+  'Calf Raise': ['Legs', 'Calves'],
+  'Plank': ['Abs'],
+  'Crunch': ['Abs'],
+  'Cable Crunch': ['Abs'],
+  'Hanging Leg Raise': ['Abs'],
+  'Russian Twist': ['Abs'],
+};
 
 const ACTIVITIES = [
   { id: 'run', name: 'Run', icon: '🏃', pace: true },
@@ -22,7 +59,7 @@ const ACTIVITIES = [
   { id: 'other', name: 'Other', icon: '⭐' },
 ];
 
-const TITLES = { home: 'Today', workout: 'Workout', progress: 'Progress', history: 'History' };
+const TITLES = { home: 'Today', workout: 'Workout', progress: 'Progress', history: 'Calendar', edit: 'Edit workout' };
 
 /* ---------- Helpers ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -41,6 +78,9 @@ const fmtNum = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigit
 const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 const e1rm = (w, r) => (w > 0 && r > 0 ? w * (1 + r / 30) : 0);
 const actMeta = (id) => ACTIVITIES.find((a) => a.id === id) || ACTIVITIES.at(-1);
+const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fmtTime = (t) => { if (!t) return ''; const [h, m] = t.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); };
+const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 const fmtSecs = (s) => {
   s = Math.max(0, Math.floor(s));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -52,15 +92,22 @@ const fmtSecs = (s) => {
 // a tombstone in `deleted`, and settings / draft carry their own timestamps in `meta`.
 const freshState = () => ({
   settings: { unit: 'kg', dist: 'km', goal: 3, rest: 90 },
-  workouts: [], weights: [], custom: [], draft: null,
+  workouts: [], weights: [], library: [], draft: null,
   deleted: {}, meta: { settingsAt: 0, draftAt: 0 },
 });
 
+// `library` holds the user's own exercises plus edits to built-in ones (same id as the
+// built-in, "d:<name>"). Deleting an exercise leaves a tombstone like any other entry.
 function normalize(s) {
   const f = freshState();
+  const library = [...(s.library || [])];
+  // Older versions stored custom exercise names in `custom`: turn them into library entries.
+  for (const name of s.custom || []) {
+    if (!library.some((x) => x.id === `c:${name}`)) library.push({ id: `c:${name}`, name, tags: [], updatedAt: 0 });
+  }
   return {
     settings: { ...f.settings, ...s.settings },
-    workouts: s.workouts || [], weights: s.weights || [], custom: s.custom || [], draft: s.draft || null,
+    workouts: s.workouts || [], weights: s.weights || [], library, draft: s.draft || null,
     deleted: s.deleted || {}, meta: { ...f.meta, ...s.meta },
   };
 }
@@ -116,7 +163,7 @@ function mergeStates(a, b) {
     settings: { ...freshState().settings, ...(sA ? a.settings : b.settings) },
     workouts: list(a.workouts, b.workouts),
     weights: [...byDate.values()].sort((p, q) => (p.id < q.id ? -1 : 1)),
-    custom: [...new Set([...a.custom, ...b.custom])].sort(),
+    library: list(a.library, b.library),
     draft: dA ? a.draft : b.draft,
     deleted,
     meta: { settingsAt: Math.max(a.meta.settingsAt, b.meta.settingsAt), draftAt: Math.max(a.meta.draftAt, b.meta.draftAt) },
@@ -143,7 +190,34 @@ document.addEventListener('focusout', () => setTimeout(() => {
 window.FT = { getState: () => state, merge: mergeStates, applyRemote, ask: (o) => ask(o) };
 
 /* ---------- Derived data ---------- */
-const sorted = () => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts);
+// Time of day a session happened ("HH:MM") or null. Older strength sessions logged live
+// have no `time` field but their start timestamp is exact, so use that.
+const timeOf = (w) => (w.time !== undefined ? w.time || null : w.type === 'strength' && w.ts ? hhmm(new Date(w.ts)) : null);
+const sorted = () => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date) || (timeOf(b) || '').localeCompare(timeOf(a) || '') || b.ts - a.ts);
+const tsFor = (date, time) => { const d = fromKey(date); if (time) { const [h, m] = time.split(':').map(Number); d.setHours(h, m); } else d.setHours(12); return d.getTime(); };
+
+/* ---------- Exercise library ---------- */
+function exLibrary() {
+  const own = new Map(state.library.map((x) => [x.id, x]));
+  const out = [];
+  for (const [name, tags] of Object.entries(DEFAULT_EXERCISES)) {
+    const id = `d:${name}`;
+    if (own.has(id) || state.deleted[id]) continue;
+    out.push({ id, name, tags, builtin: true });
+  }
+  for (const x of own.values()) out.push({ ...x, builtin: x.id.startsWith('d:') });
+  return out.sort((a, b) => byName(a.name, b.name));
+}
+const findExercise = (name) => exLibrary().find((x) => x.name.toLowerCase() === String(name).toLowerCase());
+const exTags = (name) => findExercise(name)?.tags || [];
+const tagOrder = (t) => { const i = TAGS.indexOf(t); return i < 0 ? 99 : i; };
+const sortTags = (tags) => [...new Set(tags)].sort((a, b) => tagOrder(a) - tagOrder(b) || byName(a, b));
+function allTags() { return sortTags([...TAGS, ...exLibrary().flatMap((x) => x.tags)]); }
+function workoutTags(w) {
+  if (w.type === 'cardio') return ['Cardio'];
+  return sortTags(w.exercises.flatMap((e) => exTags(e.name)));
+}
+const tagChips = (tags) => (tags.length ? `<span class="tag-list">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span>` : '');
 const strength = () => state.workouts.filter((w) => w.type === 'strength');
 const volume = (w) => w.exercises.reduce((v, e) => v + e.sets.reduce((s, x) => s + x.weight * x.reps, 0), 0);
 
@@ -216,15 +290,7 @@ function exerciseHistory(name) {
 }
 
 function loggedExercises() {
-  const freq = {};
-  strength().forEach((w) => w.exercises.forEach((e) => { freq[e.name] = (freq[e.name] || 0) + 1; }));
-  return Object.keys(freq).sort((a, b) => freq[b] - freq[a] || a.localeCompare(b));
-}
-
-function allExercises() {
-  const logged = loggedExercises();
-  const rest = [...new Set([...state.custom, ...EXERCISES])].filter((n) => !logged.includes(n)).sort((a, b) => a.localeCompare(b));
-  return [...logged, ...rest];
+  return [...new Set(strength().flatMap((w) => w.exercises.map((e) => e.name)))].sort(byName);
 }
 
 /* ---------- Charts ---------- */
@@ -262,11 +328,14 @@ function lineChart(pts, color) {
 /* ---------- Views ---------- */
 const empty = (title, text) => `<div class="empty"><b>${title}</b>${text}</div>`;
 
-function workoutRow(w) {
+function workoutRow(w, { showDate = true } = {}) {
   const icon = w.type === 'strength' ? '🏋️' : actMeta(w.activity).icon;
+  const t = timeOf(w);
+  const when = [showDate && fmtDate(w.date), t && fmtTime(t)].filter(Boolean).join(' · ');
+  const tags = w.type === 'strength' ? workoutTags(w) : [];
   return `<button class="row" data-action="open-workout" data-id="${w.id}">
     <span class="row-icon ${w.type}">${icon}</span>
-    <span class="row-main"><b>${esc(w.name)}</b><small>${fmtDate(w.date)} · ${esc(summary(w))}</small></span>
+    <span class="row-main"><b>${esc(w.name)}</b><small>${when ? `${when} · ` : ''}${esc(summary(w))}</small>${tagChips(tags.slice(0, 4))}</span>
     <span class="chev">›</span></button>`;
 }
 
@@ -320,18 +389,20 @@ function homeView() {
 function workoutView() {
   const d = state.draft;
   if (!d) {
+    // Most recent session of each distinct workout name, listed A–Z.
     const tpls = [], seen = new Set();
     for (const w of sorted()) {
       if (w.type !== 'strength' || seen.has(w.name.toLowerCase())) continue;
       seen.add(w.name.toLowerCase());
       tpls.push(w);
-      if (tpls.length >= 5) break;
     }
+    tpls.sort((a, b) => byName(a.name, b.name));
     return `
     <section class="card hero">
       <div class="hero-icon">🏋️</div><h2>Ready to train?</h2>
       <p class="muted">Start an empty workout and add exercises as you go.</p>
       <button class="btn primary block" data-action="start-workout">Start empty workout</button>
+      <button class="btn ghost block" data-action="log-past">Log a past workout</button>
     </section>
     ${tpls.length ? `<h3 class="section">Repeat a workout</h3><div class="list">${tpls.map((w) => `
       <button class="row" data-action="repeat-workout" data-id="${w.id}"><span class="row-icon strength">↻</span>
@@ -346,7 +417,10 @@ function workoutView() {
   <div class="draft-head">
     <input class="title-input" data-draft="name" value="${esc(d.name)}" aria-label="Workout name" enterkeyhint="done">
     <div class="draft-meta">
-      <input type="date" data-draft="date" value="${d.date}" max="${today()}" aria-label="Workout date">
+      <span class="meta-inputs">
+        <input type="date" data-draft="date" value="${d.date}" max="${today()}" aria-label="Workout date">
+        <input type="time" data-draft="time" value="${d.time ?? hhmm(new Date(d.start))}" aria-label="Start time">
+      </span>
       <span class="timer">⏱ <span id="elapsed">${fmtSecs((Date.now() - d.start) / 1000)}</span></span>
     </div>
   </div>
@@ -358,20 +432,21 @@ function workoutView() {
   </div>`;
 }
 
-function exerciseCard(e, ei, u) {
-  const last = lastExercise(e.name);
+// `live` = the in-progress workout (with ✓ buttons + rest timer); false = editing a saved one.
+function exerciseCard(e, ei, u, live = true) {
+  const last = live ? lastExercise(e.name) : null;
   return `<section class="card ex">
-    <div class="ex-head"><h3>${esc(e.name)}</h3>
+    <div class="ex-head"><div><h3>${esc(e.name)}</h3>${tagChips(exTags(e.name))}</div>
       <button class="icon-btn sm" data-action="remove-ex" data-ei="${ei}" aria-label="Remove ${esc(e.name)}">✕</button></div>
     ${last ? `<p class="hint">Last time: ${esc(describeSets(last.e.sets))} · ${fmtDate(last.w.date)}</p>` : ''}
-    <div class="sets">
-      <div class="set-row head"><span>Set</span><span>${u}</span><span>Reps</span><span></span></div>
+    <div class="sets${live ? '' : ' no-check'}">
+      <div class="set-row head"><span>Set</span><span>${u}</span><span>Reps</span>${live ? '<span></span>' : ''}</div>
       ${e.sets.map((s, si) => `
-      <div class="set-row${s.done ? ' done' : ''}">
+      <div class="set-row${s.done && live ? ' done' : ''}">
         <span class="set-n">${si + 1}</span>
         <input inputmode="decimal" placeholder="0" data-set="weight" data-ei="${ei}" data-si="${si}" value="${esc(s.weight)}" aria-label="Set ${si + 1} weight">
         <input inputmode="numeric" placeholder="0" data-set="reps" data-ei="${ei}" data-si="${si}" value="${esc(s.reps)}" aria-label="Set ${si + 1} reps">
-        <button class="check" data-action="toggle-set" data-ei="${ei}" data-si="${si}" aria-label="Mark set ${si + 1} done">✓</button>
+        ${live ? `<button class="check" data-action="toggle-set" data-ei="${ei}" data-si="${si}" aria-label="Mark set ${si + 1} done">✓</button>` : ''}
       </div>`).join('')}
     </div>
     <div class="ex-actions">
@@ -469,27 +544,152 @@ function progressView() {
   </div>`;
 }
 
-function historyView() {
-  const list = sorted();
-  if (!list.length) return empty('Nothing logged yet', 'Your completed workouts and activities will appear here.');
+/* ---------- Calendar ---------- */
+let calMonth = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+let calDay = today();
+let calTag = null;
+
+const matchesTag = (w) => !calTag || workoutTags(w).includes(calTag);
+
+function calendarView() {
+  const list = sorted().filter(matchesTag);
+  const byDay = {};
+  for (const w of list) (byDay[w.date] ??= []).push(w);
+
+  // Filter chips: only tags that appear in some session, plus "All".
+  const used = sortTags(state.workouts.flatMap(workoutTags));
+  const chips = used.length ? `<div class="chip-row">
+      <button class="fchip${calTag ? '' : ' on'}" data-action="cal-tag" data-tag="">All</button>
+      ${used.map((t) => `<button class="fchip${calTag === t ? ' on' : ''}" data-action="cal-tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
+    </div>` : '';
+
+  // Month grid starting on Monday, always 6 rows.
+  const y = calMonth.getFullYear(), m = calMonth.getMonth();
+  const start = weekStart(calMonth);
+  const cells = Array.from({ length: 42 }, (_, i) => {
+    const d = addDays(start, i), k = toKey(d);
+    const ws = byDay[k] || [];
+    const dots = ws.slice(0, 3).map((w) => `<i class="${w.type}"></i>`).join('') + (ws.length > 3 ? '<i class="more"></i>' : '');
+    const cls = [d.getMonth() !== m && 'out', k === today() && 'today', k === calDay && 'sel', ws.length && 'has', k > today() && 'future'].filter(Boolean).join(' ');
+    return `<button class="cal-cell ${cls}" data-action="cal-day" data-date="${k}" aria-label="${fmtDate(k)}${ws.length ? `, ${ws.length} session${ws.length === 1 ? '' : 's'}` : ''}">
+      <span>${d.getDate()}</span><span class="dots">${dots}</span></button>`;
+  }).join('');
+  const monthKey = `${y}-${pad(m + 1)}`;
+  const monthCount = list.filter((w) => w.date.startsWith(monthKey)).length;
+  const activeDays = new Set(list.filter((w) => w.date.startsWith(monthKey)).map((w) => w.date)).size;
+
+  // Selected day, earliest first; sessions without a time go last.
+  const dayList = [...(byDay[calDay] || [])].sort((a, b) => (timeOf(a) || '99').localeCompare(timeOf(b) || '99'));
+  const dayLabel = fromKey(calDay).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+  // Everything else below, grouped by month.
   const groups = {};
-  for (const w of list) {
-    const k = fromKey(w.date).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    (groups[k] ??= []).push(w);
-  }
-  return Object.entries(groups).map(([m, ws]) =>
-    `<h3 class="section">${m} <span class="count">${ws.length}</span></h3><div class="list">${ws.map(workoutRow).join('')}</div>`).join('');
+  for (const w of list) (groups[fromKey(w.date).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })] ??= []).push(w);
+
+  return `
+  ${chips}
+  <section class="card cal">
+    <div class="cal-head">
+      <button class="icon-btn" data-action="cal-prev" aria-label="Previous month">‹</button>
+      <div class="cal-title"><b>${calMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</b>
+        <small>${monthCount} session${monthCount === 1 ? '' : 's'} · ${activeDays} active day${activeDays === 1 ? '' : 's'}</small></div>
+      <button class="icon-btn" data-action="cal-next" aria-label="Next month">›</button>
+    </div>
+    <div class="cal-grid">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => `<span class="cal-dow">${d}</span>`).join('')}${cells}</div>
+    <div class="cal-legend"><span><i class="strength"></i>Strength</span><span><i class="cardio"></i>Cardio</span>
+      ${toKey(calMonth) !== toKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) ? '<button class="link" data-action="cal-today">Today</button>' : ''}</div>
+  </section>
+
+  <div class="day-head"><h3 class="section">${dayLabel}</h3>
+    ${calDay <= today() ? `<button class="btn soft sm" data-action="add-on-day" data-date="${calDay}">+ Add</button>` : ''}</div>
+  ${dayList.length ? `<div class="list">${dayList.map((w) => workoutRow(w, { showDate: false })).join('')}</div>`
+    : `<div class="empty small-empty">${calTag ? `No ${esc(calTag)} sessions on this day.` : 'Nothing logged on this day.'}</div>`}
+
+  ${list.length ? `<h3 class="section">${calTag ? `All ${esc(calTag)} sessions` : 'All sessions'}</h3>` : ''}
+  ${Object.entries(groups).map(([mo, ws]) => `<p class="month-label">${mo} <span class="count">${ws.length}</span></p><div class="list">${ws.map((w) => workoutRow(w)).join('')}</div>`).join('')}`;
 }
 
-const VIEWS = { home: homeView, workout: workoutView, progress: progressView, history: historyView };
+/* ---------- Edit / log past workout ---------- */
+// `editing` is an in-memory copy of a strength workout being edited (or created after the fact).
+// Nothing is written until Save.
+let editing = null;
+
+function startEdit(w, date) {
+  editing = w
+    ? { id: w.id, isNew: false, name: w.name, date: w.date, time: timeOf(w) || '', duration: w.duration ?? '', notes: w.notes || '', ts: w.ts,
+        exercises: w.exercises.map((e) => ({ name: e.name, sets: e.sets.map((s) => ({ weight: s.weight || '', reps: s.reps })) })) }
+    : { id: null, isNew: true, name: 'Workout', date: date || today(), time: '', duration: '', notes: '', exercises: [] };
+  editing.returnTab = tab === 'edit' ? 'history' : tab;
+  closeSheet();
+  go('edit');
+}
+
+function editView() {
+  const e = editing;
+  if (!e) return empty('Nothing to edit', '');
+  const u = state.settings.unit;
+  return `
+  <div class="draft-head">
+    <input class="title-input" data-edit="name" value="${esc(e.name)}" aria-label="Workout name" enterkeyhint="done">
+  </div>
+  <div class="edit-meta">
+    <label class="field"><span>Date</span><input type="date" data-edit="date" value="${e.date}" max="${today()}"></label>
+    <label class="field"><span>Time <em>optional</em></span><input type="time" data-edit="time" value="${esc(e.time)}"></label>
+    <label class="field"><span>Duration (min) <em>optional</em></span><input inputmode="numeric" data-edit="duration" value="${esc(e.duration)}" placeholder="—"></label>
+  </div>
+  ${e.exercises.map((x, ei) => exerciseCard(x, ei, u, false)).join('') || empty('No exercises yet', 'Add the exercises you did, then fill in your sets.')}
+  <button class="btn soft block" data-action="add-exercise">+ Add exercise</button>
+  <label class="field notes-field"><span>Notes <em>optional</em></span><input data-edit="notes" value="${esc(e.notes)}" placeholder="How did it go?"></label>
+  <div class="draft-actions">
+    <button class="btn primary block" data-action="save-edit">${e.isNew ? 'Save workout' : 'Save changes'}</button>
+    <button class="btn ghost block" data-action="cancel-edit">Cancel</button>
+    ${e.isNew ? '' : `<button class="btn ghost danger block" data-action="delete-workout" data-id="${e.id}">Delete workout</button>`}
+  </div>`;
+}
+
+function saveEdit() {
+  const e = editing;
+  const exercises = e.exercises
+    .map((x) => ({ name: x.name, sets: x.sets.filter((s) => num(s.reps) > 0).map((s) => ({ weight: num(s.weight), reps: Math.round(num(s.reps)) })) }))
+    .filter((x) => x.sets.length);
+  if (!exercises.length) { toast('Add at least one set with reps'); return; }
+  if (!e.date) { toast('Pick a date'); return; }
+  const now = Date.now();
+  const w = {
+    id: e.id || uid(), type: 'strength', name: e.name.trim() || 'Workout', date: e.date, time: e.time || null,
+    ts: e.isNew || !e.ts ? tsFor(e.date, e.time) : e.ts, updatedAt: now,
+    duration: num(e.duration) > 0 ? Math.round(num(e.duration)) : null, notes: e.notes.trim(), exercises,
+  };
+  state.workouts = state.workouts.filter((x) => x.id !== w.id);
+  state.workouts.push(w);
+  save();
+  const back = e.returnTab;
+  editing = null;
+  calDay = w.date; calMonth = new Date(fromKey(w.date).getFullYear(), fromKey(w.date).getMonth(), 1);
+  go(back === 'edit' ? 'history' : back);
+  toast(e.isNew ? 'Workout added' : 'Changes saved');
+}
+
+const VIEWS = { home: homeView, workout: workoutView, progress: progressView, history: calendarView, edit: editView };
 
 function render() {
+  if (tab === 'edit' && !editing) tab = 'history';
   $('#view').innerHTML = VIEWS[tab]();
-  $('#title').textContent = TITLES[tab];
-  document.querySelectorAll('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  centerActiveChip($('#view'));
+  $('#title').textContent = tab === 'edit' && editing?.isNew ? 'Log workout' : TITLES[tab];
+  document.querySelectorAll('.nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === (tab === 'edit' ? editing?.returnTab : tab)));
+}
+
+// Keep the selected filter chip visible after a re-render resets the row's scroll.
+function centerActiveChip(root) {
+  const on = root?.querySelector('.chip-row .fchip.on');
+  if (!on) return;
+  const row = on.parentElement;
+  row.scrollLeft = on.offsetLeft - row.clientWidth / 2 + on.offsetWidth / 2;
 }
 
 function go(t) {
+  if (tab === 'edit' && t !== 'edit') editing = null;   // leaving the editor via the nav bar discards it
   tab = t;
   render();
   window.scrollTo(0, 0);
@@ -601,22 +801,38 @@ function closeSheet() {
   } }, 250);
 }
 
-function openCardio() {
-  const last = sorted().find((w) => w.type === 'cardio');
-  const act = last?.activity || 'run';
+// New cardio entry (optionally on a given past date), or edit an existing one.
+function openCardio(existing = null, date = null) {
+  const w = existing;
+  const act = w?.activity || sorted().find((x) => x.type === 'cardio')?.activity || 'run';
   const { dist } = state.settings;
-  openSheet(`<h2>Log cardio</h2>
+  const v = (x) => (x === null || x === undefined ? '' : esc(x));
+  openSheet(`<h2>${w ? 'Edit activity' : 'Log cardio'}</h2>
   <form data-form="cardio" class="form">
+    <input type="hidden" name="id" value="${w ? w.id : ''}">
     <div class="chips">${ACTIVITIES.map((a) => `<label class="chip"><input type="radio" name="activity" value="${a.id}" ${a.id === act ? 'checked' : ''}><span>${a.icon} ${a.name}</span></label>`).join('')}</div>
     <div class="grid2">
-      <label class="field"><span>Date</span><input type="date" name="date" value="${today()}" max="${today()}"></label>
-      <label class="field"><span>Duration (min)</span><input name="duration" inputmode="decimal" placeholder="30" required></label>
-      <label class="field"><span>Distance (${dist})</span><input name="distance" inputmode="decimal" placeholder="Optional"></label>
-      <label class="field"><span>Calories</span><input name="calories" inputmode="numeric" placeholder="Optional"></label>
+      <label class="field"><span>Date</span><input type="date" name="date" value="${w?.date || date || today()}" max="${today()}"></label>
+      <label class="field"><span>Time <em>optional</em></span><input type="time" name="time" value="${v(w ? timeOf(w) : '')}"></label>
+      <label class="field"><span>Duration (min)</span><input name="duration" inputmode="decimal" placeholder="30" value="${v(w?.duration)}" required></label>
+      <label class="field"><span>Distance (${dist})</span><input name="distance" inputmode="decimal" placeholder="Optional" value="${v(w?.distance)}"></label>
+      <label class="field"><span>Calories</span><input name="calories" inputmode="numeric" placeholder="Optional" value="${v(w?.calories)}"></label>
     </div>
-    <label class="field"><span>Notes</span><input name="notes" placeholder="How did it feel?"></label>
-    <button class="btn primary block" type="submit">Save activity</button>
+    <label class="field"><span>Notes</span><input name="notes" placeholder="How did it feel?" value="${v(w?.notes)}"></label>
+    <button class="btn primary block" type="submit">${w ? 'Save changes' : 'Save activity'}</button>
+    ${w ? `<button class="btn ghost danger block" type="button" data-action="delete-workout" data-id="${w.id}">Delete</button>` : ''}
   </form>`);
+}
+
+// Choose what to add on a calendar day.
+function openAddOnDay(date) {
+  openSheet(`<p class="eyebrow">${fmtDate(date)}</p><h2>Add to this day</h2>
+    <div class="list">
+      <button class="row" data-action="log-past" data-date="${date}"><span class="row-icon strength">🏋️</span>
+        <span class="row-main"><b>Strength workout</b><small>Exercises, sets and reps</small></span><span class="chev">›</span></button>
+      <button class="row" data-action="log-cardio" data-date="${date}"><span class="row-icon cardio">🏃</span>
+        <span class="row-main"><b>Cardio</b><small>Run, ride, swim, walk…</small></span><span class="chev">›</span></button>
+    </div>`);
 }
 
 function openWeight() {
@@ -631,22 +847,90 @@ function openWeight() {
   </form>`);
 }
 
-function openPicker() {
-  openSheet(`<h2>Add exercise</h2>
-    <input id="ex-search" class="input" placeholder="Search or type a new exercise" autocomplete="off" enterkeyhint="done">
+/* ---------- Exercise picker / library ---------- */
+// mode 'add': tapping an exercise adds it to the current workout. mode 'manage': tapping edits it.
+let picker = { mode: 'add', tag: null, q: '' };
+
+function openPicker(mode = 'add') {
+  picker = { mode, tag: picker.mode === mode ? picker.tag : null, q: '' };
+  openSheet(`<h2>${mode === 'add' ? 'Add exercise' : 'Exercises'}</h2>
+    <input id="ex-search" class="input" placeholder="Search exercises" autocomplete="off" enterkeyhint="done">
+    <div id="ex-tags" class="chip-row in-sheet"></div>
     <div id="ex-list" class="pick-list"></div>`);
-  renderPicker('');
+  renderPicker();
 }
 
-function renderPicker(q) {
+function renderPicker() {
   const el = $('#ex-list');
-  if (!el || !state.draft) return;
-  const name = q.trim(), ql = name.toLowerCase();
-  const inDraft = new Set(state.draft.exercises.map((e) => e.name));
-  const list = allExercises().filter((n) => n.toLowerCase().includes(ql));
-  const exact = list.some((n) => n.toLowerCase() === ql);
-  el.innerHTML = (ql && !exact ? `<button class="pick new" data-action="pick-exercise" data-name="${esc(name)}">+ Add “${esc(name)}”</button>` : '') +
-    list.map((n) => `<button class="pick" data-action="pick-exercise" data-name="${esc(n)}">${esc(n)}${inDraft.has(n) ? '<small>added</small>' : ''}</button>`).join('');
+  if (!el) return;
+  const name = picker.q.trim(), ql = name.toLowerCase();
+  const inSession = new Set((cur()?.exercises || []).map((e) => e.name));
+  const lib = exLibrary();
+  const list = lib.filter((x) => x.name.toLowerCase().includes(ql) && (!picker.tag || x.tags.includes(picker.tag)));
+  const exact = lib.some((x) => x.name.toLowerCase() === ql);
+  const tags = sortTags(lib.flatMap((x) => x.tags));
+  $('#ex-tags').innerHTML = `<button class="fchip${picker.tag ? '' : ' on'}" data-action="pick-tag" data-tag="">All</button>` +
+    tags.map((t) => `<button class="fchip${picker.tag === t ? ' on' : ''}" data-action="pick-tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('');
+  centerActiveChip($('#ex-tags').parentElement);
+  const editBtn = (x) => `<button class="icon-btn sm" data-action="edit-exercise" data-id="${esc(x.id)}" aria-label="Edit ${esc(x.name)}">✎</button>`;
+  el.innerHTML =
+    `<button class="pick new" data-action="new-exercise" data-name="${esc(exact ? '' : name)}">+ ${name && !exact ? `Create “${esc(name)}”` : 'New exercise'}</button>` +
+    (list.length ? list.map((x) => `<div class="pick-row">
+      <button class="pick" data-action="${picker.mode === 'add' ? 'pick-exercise' : 'edit-exercise'}" data-name="${esc(x.name)}" data-id="${esc(x.id)}">
+        <span>${esc(x.name)}${inSession.has(x.name) && picker.mode === 'add' ? '<small>added</small>' : ''}</span>
+        <span class="pick-tags">${x.tags.length ? x.tags.map(esc).join(' · ') : 'No tags'}</span></button>
+      ${picker.mode === 'add' ? editBtn(x) : ''}</div>`).join('')
+      : `<p class="muted small pick-empty">No exercises match${picker.tag ? ` in ${esc(picker.tag)}` : ''}.</p>`);
+}
+
+// Create or edit an exercise. `after`: 'add' (add to the current workout), or 'picker'/'manage' (go back to that list).
+let exFormAfter = 'picker';
+function openExerciseForm({ id = null, name = '', after = 'picker' } = {}) {
+  exFormAfter = after;
+  const x = id ? exLibrary().find((e) => e.id === id) : null;
+  const selected = new Set(x?.tags || (picker.tag ? [picker.tag] : []));
+  const used = x ? state.workouts.filter((w) => w.type === 'strength' && w.exercises.some((e) => e.name === x.name)).length : 0;
+  openSheet(`<h2>${x ? 'Edit exercise' : 'New exercise'}</h2>
+  <form data-form="exercise" class="form">
+    <input type="hidden" name="id" value="${x ? esc(x.id) : ''}">
+    <label class="field"><span>Name</span><input name="name" required value="${esc(x?.name || name)}" placeholder="e.g. Cable Lateral Raise" autocomplete="off"></label>
+    <div class="field"><span>Muscle groups</span>
+      <div class="chips">${allTags().map((t) => `<label class="chip tag-chip"><input type="checkbox" name="tags" value="${esc(t)}" ${selected.has(t) ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>
+    </div>
+    <label class="field"><span>Add your own tag <em>optional</em></span><input name="newtag" placeholder="e.g. Traps" autocomplete="off"></label>
+    ${x && used ? `<p class="muted small">Used in ${used} workout${used === 1 ? '' : 's'}. Renaming updates them too.</p>` : ''}
+    <button class="btn primary block" type="submit">${x ? 'Save exercise' : after === 'add' ? 'Create and add' : 'Create exercise'}</button>
+    ${x ? `<button class="btn ghost danger block" type="button" data-action="delete-exercise" data-id="${esc(x.id)}">Delete exercise</button>` : ''}
+  </form>`);
+}
+
+function saveExercise(f, fd) {
+  const name = (f.name || '').trim().replace(/\s+/g, ' ');
+  if (!name) { toast('Give the exercise a name'); return; }
+  const tags = fd.getAll('tags');
+  const extra = (f.newtag || '').trim().replace(/\s+/g, ' ');
+  if (extra) tags.push(extra.charAt(0).toUpperCase() + extra.slice(1));
+  const old = f.id ? exLibrary().find((e) => e.id === f.id) : null;
+  const clash = findExercise(name);
+  if (clash && clash.id !== old?.id) { toast(`“${clash.name}” already exists`); return; }
+  const now = Date.now();
+  const entry = { id: old ? old.id : `u:${uid()}`, name, tags: sortTags(tags), updatedAt: now };
+  state.library = state.library.filter((e) => e.id !== entry.id);
+  state.library.push(entry);
+  // Renaming: carry the new name into every saved workout and any open session.
+  if (old && old.name !== name) {
+    for (const w of strength()) {
+      if (!w.exercises.some((e) => e.name === old.name)) continue;
+      w.exercises.forEach((e) => { if (e.name === old.name) e.name = name; });
+      w.updatedAt = now;
+    }
+    [state.draft, editing].forEach((s) => s?.exercises.forEach((e) => { if (e.name === old.name) e.name = name; }));
+  }
+  save();
+  if (exFormAfter === 'add') { closeSheet(); addExercise(name); return; }
+  openPicker(exFormAfter === 'manage' ? 'manage' : 'add');
+  render();
+  toast(old ? 'Exercise saved' : 'Exercise created');
 }
 
 function openWorkout(id) {
@@ -661,7 +945,8 @@ function openWorkout(id) {
         <div class="tile"><small>Volume</small><b>${fmtNum(volume(w))}</b></div>
       </div>` +
       w.exercises.map((e) => `<div class="detail-ex"><b>${esc(e.name)}</b><div class="set-chips">${e.sets.map((s) =>
-        `<span>${s.weight ? `${fmtNum(s.weight)} ${unit} × ` : ''}${s.reps}</span>`).join('')}</div></div>`).join('');
+        `<span>${s.weight ? `${fmtNum(s.weight)} ${unit} × ` : ''}${s.reps}</span>`).join('')}</div></div>`).join('') +
+      (w.notes ? `<p class="notes">${esc(w.notes)}</p>` : '');
   } else {
     const a = actMeta(w.activity);
     let pace = '—';
@@ -675,8 +960,11 @@ function openWorkout(id) {
         <div class="tile"><small>Calories</small><b>${w.calories ? fmtNum(w.calories) : '—'}</b></div>
       </div>${w.notes ? `<p class="notes">${esc(w.notes)}</p>` : ''}`;
   }
-  openSheet(`<p class="eyebrow">${fmtDate(w.date)}</p><h2>${esc(w.name)}</h2>${body}
+  const t = timeOf(w);
+  openSheet(`<p class="eyebrow">${fmtDate(w.date)}${t ? ` · ${fmtTime(t)}` : ''}</p><h2>${esc(w.name)}</h2>
+    ${w.type === 'strength' ? `<div class="detail-tags">${tagChips(workoutTags(w))}</div>` : ''}${body}
     <div class="sheet-actions">
+      <button class="btn primary block" data-action="edit-workout" data-id="${w.id}">Edit</button>
       ${w.type === 'strength' ? `<button class="btn soft block" data-action="repeat-workout" data-id="${w.id}">Repeat this workout</button>` : ''}
       <button class="btn ghost danger block" data-action="delete-workout" data-id="${w.id}">Delete</button>
     </div>`);
@@ -692,6 +980,8 @@ function openSettings() {
     <div class="setting"><span>Weight unit</span>${seg('unit', [['kg', 'kg'], ['lb', 'lb']], s.unit)}</div>
     <div class="setting"><span>Distance unit</span>${seg('dist', [['km', 'km'], ['mi', 'mi']], s.dist)}</div>
     <div class="setting"><span>Rest timer after each set</span>${seg('rest', [[0, 'Off'], [60, '60s'], [90, '90s'], [120, '2m'], [180, '3m']], s.rest)}</div>
+    <div class="setting"><span>Exercise library</span>
+      <button class="btn soft block" data-action="manage-exercises">Manage exercises &amp; tags</button></div>
     <h3 class="section">Cloud sync</h3>
     <div id="sync-panel"></div>
     <h3 class="section">Your data</h3>
@@ -711,20 +1001,25 @@ function defaultName() {
 function startDraft(tpl) {
   if (state.draft) return;
   state.draft = {
-    id: uid(), name: tpl?.name || defaultName(), date: today(), start: Date.now(),
+    id: uid(), name: tpl?.name || defaultName(), date: today(), time: hhmm(new Date()), start: Date.now(),
     exercises: tpl ? tpl.exercises.map((e) => ({ name: e.name, sets: e.sets.map((s) => ({ weight: s.weight || '', reps: s.reps, done: false })) })) : [],
   };
   save();
 }
 
+// The session the exercise cards are bound to: the workout being edited, or the live one.
+const cur = () => (tab === 'edit' ? editing : state.draft);
+// Live workouts persist on every change; edits stay in memory until Save.
+const touch = () => { if (tab !== 'edit') save(); };
+
 function addExercise(name) {
-  const d = state.draft;
+  const d = cur();
   if (!d) return;
-  if (!EXERCISES.includes(name) && !state.custom.includes(name)) state.custom.push(name);
+  if (!findExercise(name)) state.library.push({ id: `u:${uid()}`, name, tags: [], updatedAt: Date.now() });
   const last = lastExercise(name);
   const sets = last ? last.e.sets.map((s) => ({ weight: s.weight || '', reps: s.reps, done: false })) : [{ weight: '', reps: '', done: false }];
   d.exercises.push({ name, sets });
-  save();
+  touch();
   render();
   requestAnimationFrame(() => {
     const cards = document.querySelectorAll('.card.ex');
@@ -761,7 +1056,7 @@ async function finishWorkout() {
     return;
   }
   const w = {
-    id: d.id, type: 'strength', name: d.name.trim() || 'Workout', date: d.date, ts: d.start, updatedAt: Date.now(),
+    id: d.id, type: 'strength', name: d.name.trim() || 'Workout', date: d.date, time: d.time ?? hhmm(new Date(d.start)), ts: d.start, updatedAt: Date.now(),
     duration: clamp(Math.round((Date.now() - d.start) / 60000), 1, 300), exercises,
   };
   const prs = detectPRs(w);
@@ -861,7 +1156,7 @@ function convertUnits(kind, to) {
 }
 
 /* ---------- Actions ---------- */
-const draftSet = (d) => state.draft?.exercises[+d.ei]?.sets[+d.si];
+const draftSet = (d) => cur()?.exercises[+d.ei]?.sets[+d.si];
 
 const ACTIONS = {
   tab: (d) => go(d.tab),
@@ -880,17 +1175,49 @@ const ACTIONS = {
     closeSheet();
     go('workout');
   },
-  'log-cardio': openCardio,
+  'log-cardio': (d) => openCardio(null, d.date || null),
   'log-weight': openWeight,
-  'add-exercise': openPicker,
+  'log-past': (d) => startEdit(null, d.date || today()),
+  'add-on-day': (d) => openAddOnDay(d.date),
+  'edit-workout': (d) => {
+    const w = state.workouts.find((x) => x.id === d.id);
+    if (!w) return;
+    if (w.type === 'strength') startEdit(w); else openCardio(w);
+  },
+  'save-edit': saveEdit,
+  'cancel-edit': () => { const back = editing?.returnTab || 'history'; editing = null; go(back); },
+  'add-exercise': () => openPicker('add'),
+  'manage-exercises': () => openPicker('manage'),
   'pick-exercise': (d) => { closeSheet(); addExercise(d.name); },
+  'pick-tag': (d) => { picker.tag = d.tag || null; renderPicker(); },
+  'new-exercise': (d) => openExerciseForm({ name: d.name, after: picker.mode === 'add' && cur() ? 'add' : 'manage' }),
+  'edit-exercise': (d) => openExerciseForm({ id: d.id, after: picker.mode === 'manage' ? 'manage' : 'picker' }),
+  'delete-exercise': async (d) => {
+    const x = exLibrary().find((e) => e.id === d.id);
+    if (!x) return;
+    const back = exFormAfter === 'manage' ? 'manage' : 'add';
+    if (!await ask({ title: `Delete ${x.name}?`, text: 'It is removed from your exercise list. Past workouts that used it keep their sets.', ok: 'Delete', danger: true })) { openPicker(back); return; }
+    tombstone(x.id);
+    state.library = state.library.filter((e) => e.id !== x.id);
+    save(); openPicker(back); render(); toast('Exercise deleted');
+  },
+  'cal-prev': () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); render(); },
+  'cal-next': () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); render(); },
+  'cal-today': () => { const n = new Date(); calMonth = new Date(n.getFullYear(), n.getMonth(), 1); calDay = today(); render(); },
+  'cal-day': (d) => {
+    calDay = d.date;
+    const dt = fromKey(d.date);
+    if (dt.getMonth() !== calMonth.getMonth() || dt.getFullYear() !== calMonth.getFullYear()) calMonth = new Date(dt.getFullYear(), dt.getMonth(), 1);
+    render();
+  },
+  'cal-tag': (d) => { calTag = d.tag || null; render(); },
   'add-set': (d) => {
-    const sets = state.draft.exercises[+d.ei].sets;
+    const sets = cur().exercises[+d.ei].sets;
     const last = sets.at(-1);
     sets.push({ weight: last?.weight ?? '', reps: last?.reps ?? '', done: false });
-    save(); render();
+    touch(); render();
   },
-  'remove-set': (d) => { state.draft.exercises[+d.ei].sets.pop(); save(); render(); },
+  'remove-set': (d) => { cur().exercises[+d.ei].sets.pop(); touch(); render(); },
   'toggle-set': (d) => {
     const s = draftSet(d);
     if (!s) return;
@@ -900,10 +1227,11 @@ const ACTIONS = {
     save(); render();
   },
   'remove-ex': async (d) => {
-    const e = state.draft.exercises[+d.ei];
-    if (e.sets.some((s) => s.done) && !await ask({ title: `Remove ${e.name}?`, text: 'Its logged sets will be removed from this workout.', ok: 'Remove', danger: true })) return;
-    state.draft.exercises.splice(+d.ei, 1);
-    save(); render();
+    const s = cur(), e = s.exercises[+d.ei];
+    const hasData = e.sets.some((x) => x.done || num(x.reps) > 0);
+    if (hasData && !await ask({ title: `Remove ${e.name}?`, text: 'Its sets will be removed from this workout.', ok: 'Remove', danger: true })) return;
+    s.exercises.splice(+d.ei, 1);
+    touch(); render();
   },
   'finish-workout': finishWorkout,
   'discard-workout': async () => {
@@ -916,7 +1244,9 @@ const ACTIONS = {
     if (!await ask({ title: 'Delete this entry?', text: 'This also removes it from your other devices.', ok: 'Delete', danger: true })) return;
     tombstone(d.id);
     state.workouts = state.workouts.filter((w) => w.id !== d.id);
-    save(); closeSheet(); render(); toast('Deleted');
+    save(); closeSheet();
+    if (tab === 'edit' && editing?.id === d.id) { const back = editing.returnTab; editing = null; go(back); } else render();
+    toast('Deleted');
   },
   'delete-weight': async (d) => {
     if (!await ask({ title: 'Delete this weigh-in?', ok: 'Delete', danger: true })) return;
@@ -948,12 +1278,18 @@ const FORMS = {
     const duration = num(f.duration);
     if (duration <= 0) { toast('Enter a duration'); return; }
     const a = actMeta(f.activity);
-    state.workouts.push({
-      id: uid(), type: 'cardio', activity: a.id, name: a.name, date: f.date || today(), ts: Date.now(), updatedAt: Date.now(),
+    const old = f.id ? state.workouts.find((w) => w.id === f.id) : null;
+    const date = f.date || today(), time = f.time || null;
+    const entry = {
+      id: old ? old.id : uid(), type: 'cardio', activity: a.id, name: a.name, date, time,
+      ts: time || !old ? tsFor(date, time) : old.ts, updatedAt: Date.now(),
       duration, distance: num(f.distance) || null, calories: Math.round(num(f.calories)) || null, notes: (f.notes || '').trim(),
-    });
-    save(); closeSheet(); render(); toast(`${a.icon} ${a.name} logged`);
+    };
+    state.workouts = state.workouts.filter((w) => w.id !== entry.id);
+    state.workouts.push(entry);
+    save(); closeSheet(); render(); toast(old ? 'Changes saved' : `${a.icon} ${a.name} logged`);
   },
+  exercise: saveExercise,
   weight: (f) => {
     const value = num(f.value);
     if (value <= 0) { toast('Enter your weight'); return; }
@@ -976,12 +1312,15 @@ document.addEventListener('input', (e) => {
   const t = e.target;
   if (t.dataset.set) {
     const s = draftSet(t.dataset);
-    if (s) { s[t.dataset.set] = t.value; save(); }
+    if (s) { s[t.dataset.set] = t.value; touch(); }
   } else if (t.dataset.draft && state.draft) {
     state.draft[t.dataset.draft] = t.value;
     save();
+  } else if (t.dataset.edit && editing) {
+    editing[t.dataset.edit] = t.value;
   } else if (t.id === 'ex-search') {
-    renderPicker(t.value);
+    picker.q = t.value;
+    renderPicker();
   }
 });
 
@@ -994,12 +1333,12 @@ document.addEventListener('change', (e) => {
 
 document.addEventListener('submit', (e) => {
   const f = e.target, fn = FORMS[f.dataset.form];
-  if (fn) { e.preventDefault(); fn(Object.fromEntries(new FormData(f))); }
+  if (fn) { e.preventDefault(); const fd = new FormData(f); fn(Object.fromEntries(fd), fd); }
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeSheet();
-  if (e.key === 'Enter' && e.target.matches('.title-input, .set-row input')) e.target.blur();
+  if (e.key === 'Enter' && e.target.matches('.title-input, .set-row input, #ex-search')) e.target.blur();
 });
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden && $('#sheet').hidden) render(); });

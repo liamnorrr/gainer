@@ -7,6 +7,9 @@ A mobile-first fitness tracker web app (PWA). Add it to your phone's home screen
 - **Strength workouts**: log exercises with sets, reps and weight. "Last time" hints and pre-filled sets from your previous session. Rest timer after each set. Repeat past workouts in one tap. PR detection when you finish.
 - **Cardio**: run, walk, cycle, swim, row, hike, elliptical and more, with duration, distance, calories, notes and auto pace/speed.
 - **Body weight**: daily weigh-ins with a trend chart and 30-day change.
+- **Calendar**: month overview with a dot per session; tap a day to see what you did and when. Filter by muscle group.
+- **Edit & backfill**: edit any finished workout or cardio entry, or log a past workout you forgot, with an optional time.
+- **Exercise library**: built-in exercises tagged by muscle group (chest, back, shoulders, biceps, abs, legs, hamstrings…), plus your own exercises and tags. Listed A–Z with tag filters. Manage it in Settings.
 - **Goals & streaks**: weekly workout goal ring, week-by-week streak, best streak, and a week-at-a-glance strip.
 - **Progress**: estimated 1RM chart and PRs per exercise, monthly cardio totals, all-time stats.
 - **Settings**: kg/lb and km/mi (converts existing data), weekly goal, rest timer length, backup export/import.
